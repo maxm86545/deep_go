@@ -12,7 +12,6 @@ import (
 // CircularQueue is not thread-safe.
 type CircularQueue[T constraints.Signed] struct {
 	values []T
-	size   int
 	head   int
 	tail   int
 	count  int
@@ -21,7 +20,6 @@ type CircularQueue[T constraints.Signed] struct {
 func NewCircularQueue[T constraints.Signed](size int) CircularQueue[T] {
 	return CircularQueue[T]{
 		values: make([]T, size),
-		size:   size,
 	}
 }
 
@@ -31,7 +29,7 @@ func (q *CircularQueue[T]) Push(value T) bool {
 	}
 
 	q.values[q.tail] = value
-	q.tail = (q.tail + 1) % q.size
+	q.tail = (q.tail + 1) % len(q.values)
 	q.count++
 
 	return true
@@ -42,7 +40,7 @@ func (q *CircularQueue[T]) Pop() bool {
 		return false
 	}
 
-	q.head = (q.head + 1) % q.size
+	q.head = (q.head + 1) % len(q.values)
 	q.count--
 
 	return true
@@ -61,7 +59,7 @@ func (q *CircularQueue[T]) Back() T {
 		return q.notFoundValue()
 	}
 
-	return q.values[(q.tail-1+q.size)%q.size]
+	return q.values[(q.tail-1+len(q.values))%len(q.values)]
 }
 
 func (q *CircularQueue[T]) Empty() bool {
@@ -69,7 +67,7 @@ func (q *CircularQueue[T]) Empty() bool {
 }
 
 func (q *CircularQueue[T]) Full() bool {
-	return q.count >= q.size
+	return q.count >= len(q.values)
 }
 
 func (q *CircularQueue[T]) notFoundValue() T {
