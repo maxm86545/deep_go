@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,8 +25,8 @@ var (
 	ErrInvalidConstructor = errors.New("invalid constructor")
 )
 
+// Container is not thread-safe.
 type Container struct {
-	mu    sync.RWMutex
 	types map[string]any
 }
 
@@ -38,8 +37,6 @@ func NewContainer() *Container {
 }
 
 func (c *Container) RegisterType(name string, constructor any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.types[name] = constructor
 }
 
@@ -49,13 +46,14 @@ func (c *Container) RegisterSingletonType(name string, constructor any) {
 	if fn, ok := constructor.(func() any); ok {
 		var (
 			instance any
-			once     sync.Once
+			once     bool
 		)
 
 		_constructor = func() any {
-			once.Do(func() {
+			if !once {
 				instance = fn()
-			})
+				once = true
+			}
 
 			return instance
 		}
@@ -63,15 +61,11 @@ func (c *Container) RegisterSingletonType(name string, constructor any) {
 		_constructor = constructor
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.types[name] = _constructor
 }
 
 func (c *Container) Resolve(name string) (any, error) {
-	c.mu.RLock()
 	raw, ok := c.types[name]
-	c.mu.RUnlock()
 
 	if !ok {
 		return nil, fmt.Errorf("%w: %v", ErrNotRegistered, name)
@@ -203,5 +197,31 @@ func TestDIContainer(t *testing.T) {
 		assert.NoError(t, err)
 
 		assert.True(t, m1 == m2)
+	})
+
+	t.Run("RegisterType overrides previous registration", func(t *testing.T) {
+		container.RegisterType("ServiceRewrite", func() any {
+			return 1
+		})
+		container.RegisterType("ServiceRewrite", func() any {
+			return 2
+		})
+
+		val, err := container.Resolve("ServiceRewrite")
+		assert.NoError(t, err)
+		assert.Equal(t, 2, val)
+	})
+
+	t.Run("RegisterSingletonType overrides previous registration", func(t *testing.T) {
+		container.RegisterSingletonType("ServiceSingletonRewrite", func() any {
+			return 1
+		})
+		container.RegisterSingletonType("ServiceSingletonRewrite", func() any {
+			return 2
+		})
+
+		val, err := container.Resolve("ServiceSingletonRewrite")
+		assert.NoError(t, err)
+		assert.Equal(t, 2, val)
 	})
 }
