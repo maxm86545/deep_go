@@ -25,58 +25,61 @@ var (
 	ErrInvalidConstructor = errors.New("invalid constructor")
 )
 
+type registration struct {
+	constructor func() any
+	err         error
+}
+
 // Container is not thread-safe.
 type Container struct {
-	types map[string]any
+	types map[string]registration
 }
 
 func NewContainer() *Container {
 	return &Container{
-		types: make(map[string]any),
+		types: make(map[string]registration),
 	}
 }
 
 func (c *Container) RegisterType(name string, constructor any) {
-	c.types[name] = constructor
+	c.types[name] = makeRegistration(constructor)
 }
 
 func (c *Container) RegisterSingletonType(name string, constructor any) {
-	var _constructor any
+	reg := makeRegistration(constructor)
 
-	if fn, ok := constructor.(func() any); ok {
+	if reg.err == nil {
 		var (
+			original = reg.constructor
 			instance any
 			once     bool
 		)
 
-		_constructor = func() any {
+		reg.constructor = func() any {
 			if !once {
-				instance = fn()
+				instance = original()
 				once = true
 			}
 
 			return instance
 		}
-	} else {
-		_constructor = constructor
 	}
 
-	c.types[name] = _constructor
+	c.types[name] = reg
 }
 
 func (c *Container) Resolve(name string) (any, error) {
-	raw, ok := c.types[name]
+	reg, ok := c.types[name]
 
 	if !ok {
 		return nil, fmt.Errorf("%w: %v", ErrNotRegistered, name)
 	}
 
-	constructor, ok := raw.(func() any)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrInvalidConstructor, raw)
+	if reg.err != nil {
+		return nil, reg.err
 	}
 
-	return constructor(), nil
+	return reg.constructor(), nil
 }
 
 func ResolveAs[T any](c *Container, name string) (T, error) {
@@ -95,6 +98,20 @@ func ResolveAs[T any](c *Container, name string) (T, error) {
 	}
 
 	return result, nil
+}
+
+func makeRegistration(raw any) registration {
+	fn, ok := raw.(func() any)
+
+	if !ok {
+		return registration{
+			err: fmt.Errorf("%w: %T", ErrInvalidConstructor, raw),
+		}
+	}
+
+	return registration{
+		constructor: fn,
+	}
 }
 
 func TestDIContainer(t *testing.T) {
