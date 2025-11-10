@@ -25,61 +25,68 @@ var (
 	ErrInvalidConstructor = errors.New("invalid constructor")
 )
 
-type registration struct {
-	constructor func() any
-	err         error
-}
-
 // Container is not thread-safe.
 type Container struct {
-	types map[string]registration
+	types map[string]any
 }
 
 func NewContainer() *Container {
 	return &Container{
-		types: make(map[string]registration),
+		types: make(map[string]any),
 	}
 }
 
 func (c *Container) RegisterType(name string, constructor any) {
-	c.types[name] = makeRegistration(constructor)
+	fn, err := getConstructor(constructor)
+	if err != nil {
+		c.types[name] = err
+		return
+	}
+
+	c.types[name] = fn
 }
 
 func (c *Container) RegisterSingletonType(name string, constructor any) {
-	reg := makeRegistration(constructor)
-
-	if reg.err == nil {
-		var (
-			original = reg.constructor
-			instance any
-			once     bool
-		)
-
-		reg.constructor = func() any {
-			if !once {
-				instance = original()
-				once = true
-			}
-
-			return instance
-		}
+	fn, err := getConstructor(constructor)
+	if err != nil {
+		c.types[name] = err
+		return
 	}
 
-	c.types[name] = reg
+	var (
+		instance any
+		once     bool
+	)
+
+	singleton := func() any {
+		if !once {
+			instance = fn()
+			once = true
+		}
+
+		return instance
+	}
+
+	c.types[name] = singleton
 }
 
 func (c *Container) Resolve(name string) (any, error) {
-	reg, ok := c.types[name]
+	raw, ok := c.types[name]
 
 	if !ok {
 		return nil, fmt.Errorf("%w: %v", ErrNotRegistered, name)
 	}
 
-	if reg.err != nil {
-		return nil, reg.err
+	constructor, ok := raw.(func() any)
+	if !ok {
+		if err, ok := raw.(error); ok {
+			return nil, err
+		} else {
+			panic("invalid constructor")
+		}
 	}
 
-	return reg.constructor(), nil
+	return constructor(), nil
 }
 
 func ResolveAs[T any](c *Container, name string) (T, error) {
@@ -100,18 +107,14 @@ func ResolveAs[T any](c *Container, name string) (T, error) {
 	return result, nil
 }
 
-func makeRegistration(raw any) registration {
+func getConstructor(raw any) (func() any, error) {
 	fn, ok := raw.(func() any)
 
 	if !ok {
-		return registration{
-			err: fmt.Errorf("%w: %T", ErrInvalidConstructor, raw),
-		}
+		return nil, fmt.Errorf("%w: %T", ErrInvalidConstructor, raw)
 	}
 
-	return registration{
-		constructor: fn,
-	}
+	return fn, nil
 }
 
 func TestDIContainer(t *testing.T) {
